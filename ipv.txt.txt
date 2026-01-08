@@ -1,0 +1,71 @@
+#!/usr/sbin/nft -f
+
+flush ruleset
+
+table inet filter {
+    chain input {
+        type filter hook input priority 0;
+        
+        # Разрешить loopback
+        iif lo accept
+        
+        # Разрешить установленные и связанные соединения
+        ct state established,related accept
+        
+        # Разрешить SSH для администрирования
+        tcp dport 22 accept
+        
+        # Разрешить WireGuard
+        udp dport 51820 accept
+        
+        # Разрешить ICMP (ping)
+        ip protocol icmp accept
+        
+        # По умолчанию запретить
+        drop
+    }
+    
+    chain forward {
+        type filter hook forward priority 0;
+        
+        # Разрешить трафик из INT и DMZ в Интернет
+        iifname { eth1, eth2 } oifname eth0 accept
+        
+        # Разрешить трафик из INT в DMZ
+        iifname eth1 oifname eth2 accept
+        
+        # Разрешить клиентам VPN доступ к INT и DMZ
+        iifname wg0 oifname { eth1, eth2 } accept
+        iifname { eth1, eth2 } oifname wg0 accept
+        
+        # Почтовый сервер -> LDAP (mail -> int-srv01)
+        ip saddr 10.1.20.10 ip daddr 10.1.10.10 tcp dport 389 accept
+        
+        # По умолчанию запретить
+        drop
+    }
+    
+    chain output {
+        type filter hook output priority 0;
+        accept
+    }
+}
+
+table ip nat {
+    chain prerouting {
+        type nat hook prerouting priority 0;
+        
+        # Перенаправление портов на обратный прокси
+        iifname eth0 tcp dport 80 dnat to 10.1.20.20:80
+        iifname eth0 tcp dport 443 dnat to 10.1.20.20:443
+        iifname eth0 udp dport 53 dnat to 10.1.20.20:53
+        iifname eth0 tcp dport 53 dnat to 10.1.20.20:53
+    }
+    
+    chain postrouting {
+        type nat hook postrouting priority 100;
+        
+        # MASQUERADE для выхода в интернет
+        oifname eth0 masquerade
+    }
+}
